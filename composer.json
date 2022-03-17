@@ -1,0 +1,11 @@
+{
+	"name": "test/cine",
+	"type": "project",
+	"description": "Ejemplo para una introduccion a Doctrine",
+	"require": {
+		"doctrine/orm": "2.4.*"
+	},
+	"autoload": {
+		"psr-0": { "": "src/" }
+	}
+}
