@@ -1,44 +1,32 @@
 <?php
 
-/**
- * Doctrine ORM
- *
- * LICENSE
- *
- * This source file is subject to the new BSD license that is bundled
- * with this package in the file LICENSE. This license can also be viewed
- * at http://hobodave.com/license.txt
- *
- * @category    DoctrineExtensions
- * @package     DoctrineExtensions\Paginate
- * @author      David Abdemoulaie <dave@hobodave.com>
- * @copyright   Copyright (c) 2010 David Abdemoulaie (http://hobodave.com/)
- * @license     http://hobodave.com/license.txt New BSD License
- */
+declare(strict_types=1);
 
 namespace Doctrine\ORM\Tools\Pagination;
 
 use Doctrine\DBAL\Types\Type;
-use Doctrine\ORM\Query\TreeWalkerAdapter;
-use Doctrine\ORM\Query\AST\SelectStatement;
-use Doctrine\ORM\Query\AST\SelectExpression;
+use Doctrine\ORM\Mapping\ClassMetadataInfo;
+use Doctrine\ORM\Query;
+use Doctrine\ORM\Query\AST\Functions\IdentityFunction;
+use Doctrine\ORM\Query\AST\Node;
 use Doctrine\ORM\Query\AST\PathExpression;
+use Doctrine\ORM\Query\AST\SelectExpression;
+use Doctrine\ORM\Query\AST\SelectStatement;
+use Doctrine\ORM\Query\TreeWalkerAdapter;
+use RuntimeException;
+
+use function count;
+use function is_string;
+use function reset;
 
 /**
  * Replaces the selectClause of the AST with a SELECT DISTINCT root.id equivalent.
- *
- * @category    DoctrineExtensions
- * @package     DoctrineExtensions\Paginate
- * @author      David Abdemoulaie <dave@hobodave.com>
- * @copyright   Copyright (c) 2010 David Abdemoulaie (http://hobodave.com/)
- * @license     http://hobodave.com/license.txt New BSD License
  */
 class LimitSubqueryWalker extends TreeWalkerAdapter
 {
-    /**
-     * ID type hint.
-     */
-    const IDENTIFIER_TYPE = 'doctrine_paginator.id.type';
+    public const IDENTIFIER_TYPE = 'doctrine_paginator.id.type';
+
+    public const FORCE_DBAL_TYPE_CONVERSION = 'doctrine_paginator.scalar_result.force_dbal_type_conversion';
 
     /**
      * Counter for generating unique order column aliases.
@@ -51,69 +39,125 @@ class LimitSubqueryWalker extends TreeWalkerAdapter
      * Walks down a SelectStatement AST node, modifying it to retrieve DISTINCT ids
      * of the root Entity.
      *
-     * @param SelectStatement $AST
-     *
      * @return void
      *
-     * @throws \RuntimeException
+     * @throws RuntimeException
      */
     public function walkSelectStatement(SelectStatement $AST)
     {
-        $parent = null;
-        $parentName = null;
-        $selectExpressions = array();
+        $queryComponents = $this->_getQueryComponents();
+        // Get the root entity and alias from the AST fromClause
+        $from      = $AST->fromClause->identificationVariableDeclarations;
+        $fromRoot  = reset($from);
+        $rootAlias = $fromRoot->rangeVariableDeclaration->aliasIdentificationVariable;
+        $rootClass = $queryComponents[$rootAlias]['metadata'];
 
-        foreach ($this->_getQueryComponents() as $dqlAlias => $qComp) {
-            // Preserve mixed data in query for ordering.
-            if (isset($qComp['resultVariable'])) {
-                $selectExpressions[] = new SelectExpression($qComp['resultVariable'], $dqlAlias);
-                continue;
-            }
+        $this->validate($AST);
+        $identifier = $rootClass->getSingleIdentifierFieldName();
 
-            if ($qComp['parent'] === null && $qComp['nestingLevel'] == 0) {
-                $parent = $qComp;
-                $parentName = $dqlAlias;
-                continue;
-            }
-        }
-
-        $identifier = $parent['metadata']->getSingleIdentifierFieldName();
-        if (isset($parent['metadata']->associationMappings[$identifier])) {
-            throw new \RuntimeException("Paginating an entity with foreign key as identifier only works when using the Output Walkers. Call Paginator#setUseOutputWalkers(true) before iterating the paginator.");
+        if (isset($rootClass->associationMappings[$identifier])) {
+            throw new RuntimeException('Paginating an entity with foreign key as identifier only works when using the Output Walkers. Call Paginator#setUseOutputWalkers(true) before iterating the paginator.');
         }
 
         $this->_getQuery()->setHint(
             self::IDENTIFIER_TYPE,
-            Type::getType($parent['metadata']->getTypeOfField($identifier))
+            Type::getType($rootClass->fieldMappings[$identifier]['type'])
         );
+
+        $this->_getQuery()->setHint(self::FORCE_DBAL_TYPE_CONVERSION, true);
 
         $pathExpression = new PathExpression(
             PathExpression::TYPE_STATE_FIELD | PathExpression::TYPE_SINGLE_VALUED_ASSOCIATION,
-            $parentName,
+            $rootAlias,
             $identifier
         );
+
         $pathExpression->type = PathExpression::TYPE_STATE_FIELD;
 
-        array_unshift($selectExpressions, new SelectExpression($pathExpression, '_dctrn_id'));
-        $AST->selectClause->selectExpressions = $selectExpressions;
+        $AST->selectClause->selectExpressions = [new SelectExpression($pathExpression, '_dctrn_id')];
+        $AST->selectClause->isDistinct        = true;
 
-        if (isset($AST->orderByClause)) {
-            foreach ($AST->orderByClause->orderByItems as $item) {
-                if ($item->expression instanceof PathExpression) {
-                    $pathExpression = new PathExpression(
-                        PathExpression::TYPE_STATE_FIELD | PathExpression::TYPE_SINGLE_VALUED_ASSOCIATION,
-                        $item->expression->identificationVariable,
-                        $item->expression->field
-                    );
-                    $pathExpression->type = PathExpression::TYPE_STATE_FIELD;
+        if (! isset($AST->orderByClause)) {
+            return;
+        }
+
+        foreach ($AST->orderByClause->orderByItems as $item) {
+            if ($item->expression instanceof PathExpression) {
+                $AST->selectClause->selectExpressions[] = new SelectExpression(
+                    $this->createSelectExpressionItem($item->expression),
+                    '_dctrn_ord' . $this->_aliasCounter++
+                );
+
+                continue;
+            }
+
+            if (is_string($item->expression) && isset($queryComponents[$item->expression])) {
+                $qComp = $queryComponents[$item->expression];
+
+                if (isset($qComp['resultVariable'])) {
                     $AST->selectClause->selectExpressions[] = new SelectExpression(
-                        $pathExpression,
-                        '_dctrn_ord' . $this->_aliasCounter++
+                        $qComp['resultVariable'],
+                        $item->expression
                     );
                 }
             }
         }
+    }
 
-        $AST->selectClause->isDistinct = true;
+    /**
+     * Validate the AST to ensure that this walker is able to properly manipulate it.
+     */
+    private function validate(SelectStatement $AST): void
+    {
+        // Prevent LimitSubqueryWalker from being used with queries that include
+        // a limit, a fetched to-many join, and an order by condition that
+        // references a column from the fetch joined table.
+        $queryComponents = $this->getQueryComponents();
+        $query           = $this->_getQuery();
+        $from            = $AST->fromClause->identificationVariableDeclarations;
+        $fromRoot        = reset($from);
+
+        if (
+            $query instanceof Query
+            && $query->getMaxResults() !== null
+            && $AST->orderByClause
+            && count($fromRoot->joins)
+        ) {
+            // Check each orderby item.
+            // TODO: check complex orderby items too...
+            foreach ($AST->orderByClause->orderByItems as $orderByItem) {
+                $expression = $orderByItem->expression;
+                if (
+                    $orderByItem->expression instanceof PathExpression
+                    && isset($queryComponents[$expression->identificationVariable])
+                ) {
+                    $queryComponent = $queryComponents[$expression->identificationVariable];
+                    if (
+                        isset($queryComponent['parent'])
+                        && $queryComponent['relation']['type'] & ClassMetadataInfo::TO_MANY
+                    ) {
+                        throw new RuntimeException('Cannot select distinct identifiers from query with LIMIT and ORDER BY on a column from a fetch joined to-many association. Use output walkers.');
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Retrieve either an IdentityFunction (IDENTITY(u.assoc)) or a state field (u.name).
+     *
+     * @return IdentityFunction|PathExpression
+     */
+    private function createSelectExpressionItem(PathExpression $pathExpression): Node
+    {
+        if ($pathExpression->type === PathExpression::TYPE_SINGLE_VALUED_ASSOCIATION) {
+            $identity = new IdentityFunction('identity');
+
+            $identity->pathExpression = clone $pathExpression;
+
+            return $identity;
+        }
+
+        return clone $pathExpression;
     }
 }

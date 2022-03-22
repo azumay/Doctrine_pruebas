@@ -1,3 +1,505 @@
+# Upgrade to 2.11
+
+## Rename `AbstractIdGenerator::generate()` to `generateId()`
+
+Implementations of `AbstractIdGenerator` have to override the method
+`generateId()` without calling the parent implementation. Not doing so is
+deprecated. Calling `generate()` on any `AbstractIdGenerator` implementation
+is deprecated.
+
+## PSR-6-based second level cache
+
+The second level cache has been reworked to consume a PSR-6 cache. Using a
+Doctrine Cache instance is deprecated.
+
+* `DefaultCacheFactory`: The constructor expects a PSR-6 cache item pool as
+  second argument now.
+* `DefaultMultiGetRegion`: This class is deprecated in favor of `DefaultRegion`.
+* `DefaultRegion`:
+  * The constructor expects a PSR-6 cache item pool as second argument now.
+  * The protected `$cache` property is deprecated.
+  * The properties `$name` and `$lifetime` as well as the constant
+   `REGION_KEY_SEPARATOR` and the method `getCacheEntryKey()` are flagged as
+   `@internal` now. They all will become `private` in 3.0.
+  * The method `getCache()` is deprecated without replacement.
+
+## Deprecated: `Doctrine\ORM\Mapping\Driver\PHPDriver`
+
+Use `StaticPHPDriver` instead when you want to programmatically configure
+entity metadata.
+
+You can convert mappings with the `orm:convert-mapping` command or more simply
+in this case, `include` the metadata file from the `loadMetadata` static method
+used by the `StaticPHPDriver`.
+
+## Deprecated: `Setup::registerAutoloadDirectory()`
+
+Use Composer's autoloader instead.
+
+## Deprecated: `AbstractHydrator::hydrateRow()`
+
+Following the deprecation of the method `AbstractHydrator::iterate()`, the
+method `hydrateRow()` has been deprecated as well.
+
+## Deprecate cache settings inspection
+
+Doctrine does not provide its own cache implementation anymore and relies on
+the PSR-6 standard instead. As a consequence, we cannot determine anymore
+whether a given cache adapter is suitable for a production environment.
+Because of that, functionality that aims to do so has been deprecated:
+
+* `Configuration::ensureProductionSettings()`
+* the `orm:ensure-production-settings` console command
+
+# Upgrade to 2.10
+
+## BC Break: `UnitOfWork` now relies on SPL object IDs, not hashes
+
+When calling the following methods, you are now supposed to use the result of
+`spl_object_id()`, and not `spl_object_hash()`:
+- `UnitOfWork::clearEntityChangeSet()`
+- `UnitOfWork::setOriginalEntityProperty()`
+
+## BC Break: Removed `TABLE` id generator strategy
+
+The implementation was unfinished for 14 years.
+It is now deprecated to rely on:
+- `Doctrine\ORM\Id\TableGenerator`;
+- `Doctrine\ORM\Mapping\ClassMetadata::GENERATOR_TYPE_TABLE`;
+- `Doctrine\ORM\Mapping\ClassMetadata::$tableGeneratorDefinition`;
+- or `Doctrine\ORM\Mapping\ClassMetadata::isIdGeneratorTable()`.
+
+## New method `Doctrine\ORM\EntityManagerInterface#wrapInTransaction($func)`
+
+Works the same as `Doctrine\ORM\EntityManagerInterface#transactional()` but returns any value returned from `$func` closure rather than just _non-empty value returned from the closure or true_.
+
+Because of BC policy, the method does not exist on the interface yet. This is the example of safe usage:
+
+```php
+function foo(EntityManagerInterface $entityManager, callable $func) {
+    if (method_exists($entityManager, 'wrapInTransaction')) {
+        return $entityManager->wrapInTransaction($func);
+    }
+    
+    return $entityManager->transactional($func);
+}
+```
+
+`Doctrine\ORM\EntityManagerInterface#transactional()` has been deprecated.
+
+## Minor BC BREAK: some exception methods have been removed
+
+The following methods were not in use and are very unlikely to be used by
+downstream packages or applications, and were consequently removed:
+
+- `ORMException::entityMissingForeignAssignedId`
+- `ORMException::entityMissingAssignedIdForField`
+- `ORMException::invalidFlushMode`
+
+## Deprecated: database-side UUID generation
+
+[DB-generated UUIDs are deprecated as of `doctrine/dbal` 2.8][DBAL deprecation].
+As a consequence, using the `UUID` strategy for generating identifiers is deprecated as well.
+Furthermore, relying on the following classes and methods is deprecated:
+
+- `Doctrine\ORM\Id\UuidGenerator`
+- `Doctrine\ORM\Mapping\ClassMetadataInfo::isIdentifierUuid()`
+
+[DBAL deprecation]: https://github.com/doctrine/dbal/pull/3212
+
+## Minor BC BREAK: Custom hydrators and `toIterable()`
+
+The type declaration of the `$stmt` parameter of `AbstractHydrator::toIterable()` has been removed. This change might
+break custom hydrator implementations that override this very method.
+
+Overriding this method is not recommended, which is why the method is documented as `@final` now.
+
+```diff
+- public function toIterable(ResultStatement $stmt, ResultSetMapping $resultSetMapping, array $hints = []): iterable
++ public function toIterable($stmt, ResultSetMapping $resultSetMapping, array $hints = []): iterable
+```
+
+## Deprecated: Entity Namespace Aliases
+
+Entity namespace aliases are deprecated, use the magic ::class constant to abbreviate full class names
+in EntityManager, EntityRepository and DQL.
+
+```diff
+-  $entityManager->find('MyBundle:User', $id);
++  $entityManager->find(User::class, $id);
+```
+
+# Upgrade to 2.9
+
+## Minor BC BREAK: Setup tool needs cache implementation
+
+With the deprecation of doctrine/cache, the setup tool might no longer work as expected without a different cache
+implementation. To work around this:
+* Install symfony/cache: `composer require symfony/cache`. This will keep previous behaviour without any changes
+* Instantiate caches yourself: to use a different cache implementation, pass a cache instance when calling any
+  configuration factory in the setup tool:
+  ```diff
+  - $config = Setup::createAnnotationMetadataConfiguration($paths, $isDevMode, $proxyDir);
+  + $cache = \Doctrine\Common\Cache\Psr6\DoctrineProvider::wrap($anyPsr6Implementation);
+  + $config = Setup::createAnnotationMetadataConfiguration($paths, $isDevMode, $proxyDir, $cache);
+  ```
+* As a quick workaround, you can lock the doctrine/cache dependency to work around this: `composer require doctrine/cache ^1.11`.
+  Note that this is only recommended as a bandaid fix, as future versions of ORM will no longer work with doctrine/cache
+  1.11.
+  
+## Deprecated: doctrine/cache for metadata caching
+
+The `Doctrine\ORM\Configuration#setMetadataCacheImpl()` method is deprecated and should no longer be used. Please use
+`Doctrine\ORM\Configuration#setMetadataCache()` with any PSR-6 cache adapter instead.
+
+## Removed: flushing metadata cache
+
+To support PSR-6 caches, the `--flush` option for the `orm:clear-cache:metadata` command is ignored. Metadata cache is
+now always cleared regardless of the cache adapter being used.
+
+# Upgrade to 2.8
+
+## Minor BC BREAK: Failed commit now throw OptimisticLockException
+
+Method `Doctrine\ORM\UnitOfWork#commit()` can throw an OptimisticLockException when a commit silently fails and returns false
+since `Doctrine\DBAL\Connection#commit()` signature changed from returning void to boolean
+
+## Deprecated: `Doctrine\ORM\AbstractQuery#iterate()`
+
+The method `Doctrine\ORM\AbstractQuery#iterate()` is deprecated in favor of `Doctrine\ORM\AbstractQuery#toIterable()`.
+Note that `toIterable()` yields results of the query, unlike `iterate()` which yielded each result wrapped into an array.
+
+# Upgrade to 2.7
+
+## Added `Doctrine\ORM\AbstractQuery#enableResultCache()` and `Doctrine\ORM\AbstractQuery#disableResultCache()` methods	
+
+Method `Doctrine\ORM\AbstractQuery#useResultCache()` which could be used for both enabling and disabling the cache
+(depending on passed flag) was split into two.	
+
+## Minor BC BREAK: paginator output walkers aren't be called anymore on sub-queries for queries without max results  
+
+To optimize DB interaction, `Doctrine\ORM\Tools\Pagination\Paginator` no longer fetches identifiers to be able to
+perform the pagination with join collections when max results isn't set in the query.
+
+## Minor BC BREAK: tables filtered with `schema_filter` are no longer created
+
+When generating schema diffs, if a source table is filtered out by a `schema_filter` expression, then a `CREATE TABLE` was
+always generated, even if the table already existed. This has been changed in this release and the table will no longer
+be created.
+
+## Deprecated number unaware `Doctrine\ORM\Mapping\UnderscoreNamingStrategy`
+
+In the last patch of the `v2.6.x` series, we fixed a bug that was not converting names properly when they had numbers
+(e.g.: `base64Encoded` was wrongly converted to `base64encoded` instead of `base64_encoded`).
+
+In order to not break BC we've introduced a way to enable the fixed behavior using a boolean constructor argument. This
+argument will be removed in 3.0 and the default behavior will be the fixed one.
+
+## Deprecated: `Doctrine\ORM\AbstractQuery#useResultCache()`	
+
+Method `Doctrine\ORM\AbstractQuery#useResultCache()` is deprecated because it is split into `enableResultCache()`
+and `disableResultCache()`. It will be removed in 3.0.
+
+## Deprecated code generators and related console commands
+
+These console commands have been deprecated:
+
+ * `orm:convert-mapping`
+ * `orm:generate:entities`
+ * `orm:generate-repositories`
+
+These classes have been deprecated:
+
+ * `Doctrine\ORM\Tools\EntityGenerator`
+ * `Doctrine\ORM\Tools\EntityRepositoryGenerator`
+
+Whole Doctrine\ORM\Tools\Export namespace with all its members have been deprecated as well.
+
+## Deprecated `Doctrine\ORM\Proxy\Proxy` marker interface
+
+Proxy objects in Doctrine ORM 3.0 will no longer implement `Doctrine\ORM\Proxy\Proxy` nor
+`Doctrine\Persistence\Proxy`: instead, they implement
+`ProxyManager\Proxy\GhostObjectInterface`.
+
+These related classes have been deprecated:
+
+ * `Doctrine\ORM\Proxy\ProxyFactory`
+ * `Doctrine\ORM\Proxy\Autoloader` - we suggest using the composer autoloader instead
+ 
+These methods have been deprecated:
+
+ * `Doctrine\ORM\Configuration#getAutoGenerateProxyClasses()`
+ * `Doctrine\ORM\Configuration#getProxyDir()`
+ * `Doctrine\ORM\Configuration#getProxyNamespace()`
+
+## Deprecated `Doctrine\ORM\Version`
+
+The `Doctrine\ORM\Version` class is now deprecated and will be removed in Doctrine ORM 3.0:
+please refrain from checking the ORM version at runtime or use Composer's [runtime API](https://getcomposer.org/doc/07-runtime.md#knowing-whether-package-x-is-installed-in-version-y).
+
+## Deprecated `EntityManager#merge()` method
+
+Merge semantics was a poor fit for the PHP "share-nothing" architecture.
+In addition to that, merging caused multiple issues with data integrity
+in the managed entity graph, which was constantly spawning more edge-case bugs/scenarios.
+
+The following API methods were therefore deprecated:
+
+* `EntityManager#merge()`
+* `UnitOfWork#merge()`
+
+An alternative to `EntityManager#merge()` will not be provided by ORM 3.0, since the merging
+semantics should be part of the business domain rather than the persistence domain of an
+application. If your application relies heavily on CRUD-alike interactions and/or `PATCH`
+restful operations, you should look at alternatives such as [JMSSerializer](https://github.com/schmittjoh/serializer).
+
+## Extending `EntityManager` is deprecated
+
+Final keyword will be added to the `EntityManager::class` in Doctrine ORM 3.0 in order to ensure that EntityManager
+ is not used as valid extension point. Valid extension point should be EntityManagerInterface.
+
+## Deprecated `EntityManager#clear($entityName)`
+
+If your code relies on clearing a single entity type via `EntityManager#clear($entityName)`,
+the signature has been changed to `EntityManager#clear()`.
+
+The main reason is that partial clears caused multiple issues with data integrity
+in the managed entity graph, which was constantly spawning more edge-case bugs/scenarios.
+
+## Deprecated `EntityManager#flush($entity)` and `EntityManager#flush($entities)`
+
+If your code relies on single entity flushing optimisations via
+`EntityManager#flush($entity)`, the signature has been changed to
+`EntityManager#flush()`.
+
+Said API was affected by multiple data integrity bugs due to the fact
+that change tracking was being restricted upon a subset of the managed
+entities. The ORM cannot support committing subsets of the managed 
+entities while also guaranteeing data integrity, therefore this
+utility was removed.
+
+The `flush()` semantics will remain the same, but the change tracking will be performed
+on all entities managed by the unit of work, and not just on the provided
+`$entity` or `$entities`, as the parameter is now completely ignored.
+
+The same applies to `UnitOfWork#commit($entity)`, which will simply be
+`UnitOfWork#commit()`.
+
+If you would still like to perform batching operations over small `UnitOfWork`
+instances, it is suggested to follow these paths instead:
+
+ * eagerly use `EntityManager#clear()` in conjunction with a specific second level
+   cache configuration (see http://docs.doctrine-project.org/projects/doctrine-orm/en/latest/reference/second-level-cache.html)
+ * use an explicit change tracking policy (see http://docs.doctrine-project.org/projects/doctrine-orm/en/latest/reference/change-tracking-policies.html)
+
+## Deprecated `YAML` mapping drivers.
+
+If your code relies on `YamlDriver`  or `SimpleYamlDriver`, you **MUST** change to
+annotation or XML drivers instead.
+
+## Deprecated: `Doctrine\ORM\EntityManagerInterface#copy()`
+
+Method `Doctrine\ORM\EntityManagerInterface#copy()` never got its implementation and is deprecated.
+It will be removed in 3.0.
+
+# Upgrade to 2.6
+
+## Added `Doctrine\ORM\EntityRepository::count()` method
+
+`Doctrine\ORM\EntityRepository::count()` has been added. This new method has different
+signature than `Countable::count()` (required parameter) and therefore are not compatible.
+If your repository implemented the `Countable` interface, you will have to use
+`$repository->count([])` instead and not implement `Countable` interface anymore.
+
+## Minor BC BREAK: `Doctrine\ORM\Tools\Console\ConsoleRunner` is now final
+
+Since it's just an utilitarian class and should not be inherited.
+
+## Minor BC BREAK: removed `Doctrine\ORM\Query\QueryException::associationPathInverseSideNotSupported()`
+
+Method `Doctrine\ORM\Query\QueryException::associationPathInverseSideNotSupported()`
+now has a required parameter `$pathExpr`.
+
+## Minor BC BREAK: removed `Doctrine\ORM\Query\Parser#isInternalFunction()`
+
+Method `Doctrine\ORM\Query\Parser#isInternalFunction()` was removed because
+the distinction between internal function and user defined DQL was removed.
+[#6500](https://github.com/doctrine/orm/pull/6500)
+
+## Minor BC BREAK: removed `Doctrine\ORM\ORMException#overwriteInternalDQLFunctionNotAllowed()`
+
+Method `Doctrine\ORM\Query\Parser#overwriteInternalDQLFunctionNotAllowed()` was
+removed because of the choice to allow users to overwrite internal functions, ie
+`AVG`, `SUM`, `COUNT`, `MIN` and `MAX`. [#6500](https://github.com/doctrine/orm/pull/6500)
+
+## PHP 7.1 is now required
+
+Doctrine 2.6 now requires PHP 7.1 or newer.
+
+As a consequence, automatic cache setup in Doctrine\ORM\Tools\Setup::create*Configuration() was changed:
+- APCu extension (ext-apcu) will now be used instead of abandoned APC (ext-apc).
+- Memcached extension (ext-memcached) will be used instead of obsolete Memcache (ext-memcache).
+- XCache support was dropped as it doesn't work with PHP 7.
+
+# Upgrade to 2.5
+
+## Minor BC BREAK: removed `Doctrine\ORM\Query\SqlWalker#walkCaseExpression()`
+
+Method `Doctrine\ORM\Query\SqlWalker#walkCaseExpression()` was unused and part
+of the internal API of the ORM, so it was removed. [#5600](https://github.com/doctrine/orm/pull/5600).
+
+## Minor BC BREAK: removed $className parameter on `AbstractEntityInheritancePersister#getSelectJoinColumnSQL()`
+
+As `$className` parameter was not used in the method, it was safely removed.
+
+## Minor BC BREAK: query cache key time is now a float
+
+As of 2.5.5, the `QueryCacheEntry#time` property will contain a float value
+instead of an integer in order to have more precision and also to be consistent
+with the `TimestampCacheEntry#time`.
+
+## Minor BC BREAK: discriminator map must now include all non-transient classes
+
+It is now required that you declare the root of an inheritance in the
+discriminator map.
+
+When declaring an inheritance map, it was previously possible to skip the root
+of the inheritance in the discriminator map. This was actually a validation
+mistake by Doctrine2 and led to problems when trying to persist instances of
+that class.
+
+If you don't plan to persist instances some classes in your inheritance, then
+either:
+
+ - make those classes `abstract`
+ - map those classes as `MappedSuperclass`
+
+## Minor BC BREAK: ``EntityManagerInterface`` instead of ``EntityManager`` in type-hints
+ 
+As of 2.5, classes requiring the ``EntityManager`` in any method signature will now require 
+an ``EntityManagerInterface`` instead.
+If you are extending any of the following classes, then you need to check following
+signatures:
+
+- ``Doctrine\ORM\Tools\DebugUnitOfWorkListener#dumpIdentityMap(EntityManagerInterface $em)``
+- ``Doctrine\ORM\Mapping\ClassMetadataFactory#setEntityManager(EntityManagerInterface $em)``
+
+## Minor BC BREAK: Custom Hydrators API change
+
+As of 2.5, `AbstractHydrator` does not enforce the usage of cache as part of
+API, and now provides you a clean API for column information through the method
+`hydrateColumnInfo($column)`.
+Cache variable being passed around by reference is no longer needed since
+Hydrators are per query instantiated since Doctrine 2.4.
+
+## Minor BC BREAK: Entity based ``EntityManager#clear()`` calls follow cascade detach
+
+Whenever ``EntityManager#clear()`` method gets called with a given entity class
+name, until 2.4, it was only detaching the specific requested entity.
+As of 2.5, ``EntityManager`` will follow configured cascades, providing a better
+memory management since associations will be garbage collected, optimizing
+resources consumption on long running jobs.
+
+## BC BREAK: NamingStrategy interface changes
+
+1. A new method ``embeddedFieldToColumnName($propertyName, $embeddedColumnName)``
+
+This method generates the column name for fields of embedded objects. If you implement your custom NamingStrategy, you
+now also need to implement this new method.
+
+2. A change to method ``joinColumnName()`` to include the $className
+
+## Updates on entities scheduled for deletion are no longer processed
+
+In Doctrine 2.4, if you modified properties of an entity scheduled for deletion, UnitOfWork would
+produce an UPDATE statement to be executed right before the DELETE statement. The entity in question
+was therefore present in ``UnitOfWork#entityUpdates``, which means that ``preUpdate`` and ``postUpdate``
+listeners were (quite pointlessly) called. In ``preFlush`` listeners, it used to be possible to undo
+the scheduled deletion for updated entities (by calling ``persist()`` if the entity was found in both
+``entityUpdates`` and ``entityDeletions``). This does not work any longer, because the entire changeset
+calculation logic is optimized away.
+
+## Minor BC BREAK: Default lock mode changed from LockMode::NONE to null in method signatures
+
+A misconception concerning default lock mode values in method signatures lead to unexpected behaviour
+in SQL statements on SQL Server. With a default lock mode of ``LockMode::NONE`` throughout the
+method signatures in ORM, the table lock hint ``WITH (NOLOCK)`` was appended to all locking related
+queries by default. This could result in unpredictable results because an explicit ``WITH (NOLOCK)``
+table hint tells SQL Server to run a specific query in transaction isolation level READ UNCOMMITTED
+instead of the default READ COMMITTED transaction isolation level.
+Therefore there now is a distinction between ``LockMode::NONE`` and ``null`` to be able to tell
+Doctrine whether to add table lock hints to queries by intention or not. To achieve this, the following
+method signatures have been changed to declare ``$lockMode = null`` instead of ``$lockMode = LockMode::NONE``:
+
+- ``Doctrine\ORM\Cache\Persister\AbstractEntityPersister#getSelectSQL()``
+- ``Doctrine\ORM\Cache\Persister\AbstractEntityPersister#load()``
+- ``Doctrine\ORM\Cache\Persister\AbstractEntityPersister#refresh()``
+- ``Doctrine\ORM\Decorator\EntityManagerDecorator#find()``
+- ``Doctrine\ORM\EntityManager#find()``
+- ``Doctrine\ORM\EntityRepository#find()``
+- ``Doctrine\ORM\Persisters\BasicEntityPersister#getSelectSQL()``
+- ``Doctrine\ORM\Persisters\BasicEntityPersister#load()``
+- ``Doctrine\ORM\Persisters\BasicEntityPersister#refresh()``
+- ``Doctrine\ORM\Persisters\EntityPersister#getSelectSQL()``
+- ``Doctrine\ORM\Persisters\EntityPersister#load()``
+- ``Doctrine\ORM\Persisters\EntityPersister#refresh()``
+- ``Doctrine\ORM\Persisters\JoinedSubclassPersister#getSelectSQL()``
+
+You should update signatures for these methods if you have subclassed one of the above classes.
+Please also check the calling code of these methods in your application and update if necessary.
+
+**Note:**
+This in fact is really a minor BC BREAK and should not have any affect on database vendors
+other than SQL Server because it is the only one that supports and therefore cares about
+``LockMode::NONE``. It's really just a FIX for SQL Server environments using ORM.
+
+## Minor BC BREAK: `__clone` method not called anymore when entities are instantiated via metadata API
+
+As of PHP 5.6, instantiation of new entities is deferred to the
+[`doctrine/instantiator`](https://github.com/doctrine/instantiator) library, which will avoid calling `__clone`
+or any public API on instantiated objects.
+
+## BC BREAK: `Doctrine\ORM\Repository\DefaultRepositoryFactory` is now `final`
+
+Please implement the `Doctrine\ORM\Repository\RepositoryFactory` interface instead of extending
+the `Doctrine\ORM\Repository\DefaultRepositoryFactory`.
+
+## BC BREAK: New object expression DQL queries now respects user provided aliasing and not return consumed fields
+
+When executing DQL queries with new object expressions, instead of returning DTOs numerically indexes, it will now respect user provided aliases. Consider the following query:
+
+    SELECT new UserDTO(u.id,u.name) as user,new AddressDTO(a.street,a.postalCode) as address, a.id as addressId FROM User u INNER JOIN u.addresses a WITH a.isPrimary = true
+    
+Previously, your result would be similar to this:
+
+    array(
+        0=>array(
+            0=>{UserDTO object},
+            1=>{AddressDTO object},
+            2=>{u.id scalar},
+            3=>{u.name scalar},
+            4=>{a.street scalar},
+            5=>{a.postalCode scalar},
+            'addressId'=>{a.id scalar},
+        ),
+        ...
+    )
+
+From now on, the resultset will look like this:
+
+    array(
+        0=>array(
+            'user'=>{UserDTO object},
+            'address'=>{AddressDTO object},
+            'addressId'=>{a.id scalar}
+        ),
+        ...
+    )
+
+## Minor BC BREAK: added second parameter $indexBy in EntityRepository#createQueryBuilder method signature
+
+Added way to access the underlying QueryBuilder#from() method's 'indexBy' parameter when using EntityRepository#createQueryBuilder()
+
 # Upgrade to 2.4
 
 ## BC BREAK: Compatibility Bugfix in PersistentCollection#matching()
@@ -99,17 +601,17 @@ above you must implement these new methods.
 
 ## Metadata Drivers
 
-Metadata drivers have been rewritten to reuse code from Doctrine\Common. Anyone who is using the
+Metadata drivers have been rewritten to reuse code from `Doctrine\Persistence`. Anyone who is using the
 `Doctrine\ORM\Mapping\Driver\Driver` interface should instead refer to
-`Doctrine\Common\Persistence\Mapping\Driver\MappingDriver`. Same applies to
+`Doctrine\Persistence\Mapping\Driver\MappingDriver`. Same applies to
 `Doctrine\ORM\Mapping\Driver\AbstractFileDriver`: you should now refer to
-`Doctrine\Common\Persistence\Mapping\Driver\FileDriver`.
+`Doctrine\Persistence\Mapping\Driver\FileDriver`.
 
 Also, following mapping drivers have been deprecated, please use their replacements in Doctrine\Common as listed:
 
- *  `Doctrine\ORM\Mapping\Driver\DriverChain`       => `Doctrine\Common\Persistence\Mapping\Driver\MappingDriverChain`
- *  `Doctrine\ORM\Mapping\Driver\PHPDriver`         => `Doctrine\Common\Persistence\Mapping\Driver\PHPDriver`
- *  `Doctrine\ORM\Mapping\Driver\StaticPHPDriver`   => `Doctrine\Common\Persistence\Mapping\Driver\StaticPHPDriver`
+ *  `Doctrine\ORM\Mapping\Driver\DriverChain`       => `Doctrine\Persistence\Mapping\Driver\MappingDriverChain`
+ *  `Doctrine\ORM\Mapping\Driver\PHPDriver`         => `Doctrine\Persistence\Mapping\Driver\PHPDriver`
+ *  `Doctrine\ORM\Mapping\Driver\StaticPHPDriver`   => `Doctrine\Persistence\Mapping\Driver\StaticPHPDriver`
 
 # Upgrade to 2.2
 
@@ -198,7 +700,7 @@ Previously EntityManager#find(null) returned null. It now throws an exception.
 
 ## Interface for EntityRepository
 
-The EntityRepository now has an interface Doctrine\Common\Persistence\ObjectRepository. This means that your classes that override EntityRepository and extend find(), findOneBy() or findBy() must be adjusted to follow this interface.
+The EntityRepository now has an interface Doctrine\Persistence\ObjectRepository. This means that your classes that override EntityRepository and extend find(), findOneBy() or findBy() must be adjusted to follow this interface.
 
 ## AnnotationReader changes
 

@@ -21,28 +21,28 @@ use Symfony\Component\Console\Exception\LogicException;
  */
 class InputArgument
 {
-    const REQUIRED = 1;
-    const OPTIONAL = 2;
-    const IS_ARRAY = 4;
+    public const REQUIRED = 1;
+    public const OPTIONAL = 2;
+    public const IS_ARRAY = 4;
 
-    private $name;
-    private $mode;
-    private $default;
-    private $description;
+    private string $name;
+    private int $mode;
+    private string|int|bool|array|null|float $default;
+    private string $description;
 
     /**
-     * @param string               $name        The argument name
-     * @param int|null             $mode        The argument mode: self::REQUIRED or self::OPTIONAL
-     * @param string               $description A description text
-     * @param string|string[]|null $default     The default value (for self::OPTIONAL mode only)
+     * @param string                           $name        The argument name
+     * @param int|null                         $mode        The argument mode: self::REQUIRED or self::OPTIONAL
+     * @param string                           $description A description text
+     * @param string|bool|int|float|array|null $default     The default value (for self::OPTIONAL mode only)
      *
      * @throws InvalidArgumentException When argument mode is not valid
      */
-    public function __construct($name, $mode = null, $description = '', $default = null)
+    public function __construct(string $name, int $mode = null, string $description = '', string|bool|int|float|array $default = null)
     {
         if (null === $mode) {
             $mode = self::OPTIONAL;
-        } elseif (!\is_int($mode) || $mode > 7 || $mode < 1) {
+        } elseif ($mode > 7 || $mode < 1) {
             throw new InvalidArgumentException(sprintf('Argument mode "%s" is not valid.', $mode));
         }
 
@@ -55,10 +55,8 @@ class InputArgument
 
     /**
      * Returns the argument name.
-     *
-     * @return string The argument name
      */
-    public function getName()
+    public function getName(): string
     {
         return $this->name;
     }
@@ -68,7 +66,7 @@ class InputArgument
      *
      * @return bool true if parameter mode is self::REQUIRED, false otherwise
      */
-    public function isRequired()
+    public function isRequired(): bool
     {
         return self::REQUIRED === (self::REQUIRED & $this->mode);
     }
@@ -78,7 +76,7 @@ class InputArgument
      *
      * @return bool true if mode is self::IS_ARRAY, false otherwise
      */
-    public function isArray()
+    public function isArray(): bool
     {
         return self::IS_ARRAY === (self::IS_ARRAY & $this->mode);
     }
@@ -86,11 +84,9 @@ class InputArgument
     /**
      * Sets the default value.
      *
-     * @param string|string[]|null $default The default value
-     *
      * @throws LogicException When incorrect default value is given
      */
-    public function setDefault($default = null)
+    public function setDefault(string|bool|int|float|array $default = null)
     {
         if (self::REQUIRED === $this->mode && null !== $default) {
             throw new LogicException('Cannot set a default value except for InputArgument::OPTIONAL mode.');
@@ -98,7 +94,7 @@ class InputArgument
 
         if ($this->isArray()) {
             if (null === $default) {
-                $default = array();
+                $default = [];
             } elseif (!\is_array($default)) {
                 throw new LogicException('A default value for an array argument must be an array.');
             }
@@ -109,20 +105,16 @@ class InputArgument
 
     /**
      * Returns the default value.
-     *
-     * @return string|string[]|null The default value
      */
-    public function getDefault()
+    public function getDefault(): string|bool|int|float|array|null
     {
         return $this->default;
     }
 
     /**
      * Returns the description text.
-     *
-     * @return string The description text
      */
-    public function getDescription()
+    public function getDescription(): string
     {
         return $this->description;
     }

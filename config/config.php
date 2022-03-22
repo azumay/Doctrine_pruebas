@@ -4,10 +4,10 @@
 
 $dbParams = [
 	'driver' =>'pdo_mysql',
-	'host' =>'127.0.0.1',
-	'dbname' =>'test',
-	'user' =>'test',
-	'password' =>'test'
+	'host' =>'localhost',
+	'dbname' =>'Cinesa',
+	'user' =>'yamuza',
+	'password' =>'yamuza'
 	];
 
 // Estamos en modo desarrollo?

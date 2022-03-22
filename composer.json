@@ -3,7 +3,9 @@
 	"type": "project",
 	"description": "Ejemplo para una introduccion a Doctrine",
 	"require": {
-		"doctrine/orm": "2.4.*"
+		"doctrine/orm": "*",
+		"symfony/cache": "*",
+		"doctrine/annotations": "*"
 	},
 	"autoload": {
 		"psr-0": { "": "src/" }
