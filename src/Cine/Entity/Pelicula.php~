@@ -10,7 +10,7 @@ use Doctrine\ORM\Mapping\Column;
 * Pelicula
 *
 * @Entity
-* @Table( name="peliss" )
+* @Table( name="movie" )
 *
 */
 class Pelicula {
