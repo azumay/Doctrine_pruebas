@@ -7,6 +7,9 @@
 ## Paso 3 - Generar Getters & Setters
 <code>php vendor/doctrine/orm/bin/doctrine.php orm:generate-entities src/</code>
 
+Para efectuar cambios:
+<code>php vendor/doctrine/orm/bin/doctrine.php</code>
+
 Expected result:
 <a href="https://i.imgur.com/pDW3nCZ.png"><img src="https://i.imgur.com/pDW3nCZ.png" title="source: imgur.com" /></a>
 
